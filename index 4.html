@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supermarkt Tycoon</title>
+<style>
+:root{--bg:#e9efe9;--panel:#fff;--ink:#17302b;--mut:#5d7770;--acc:#e8702a;--line:#cfdcd5;--btn:#17302b;--btnink:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10201d;--panel:#182d29;--ink:#e6f0ec;--mut:#8fb0a6;--line:#2a4740;--btn:#e6f0ec;--btnink:#10201d}}
+:root[data-theme="dark"]{--bg:#10201d;--panel:#182d29;--ink:#e6f0ec;--mut:#8fb0a6;--line:#2a4740;--btn:#e6f0ec;--btnink:#10201d}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.4 "Trebuchet MS","Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header,footer{display:flex;gap:8px;align-items:center;padding:8px 10px;flex-wrap:wrap}
+header span{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-weight:700}
+main{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 10px;position:relative}
+canvas{max-width:100%;max-height:100%;border-radius:12px;border:2px solid var(--line);touch-action:none;background:#dbe5df}
+footer #msg{flex:1;min-width:180px;color:var(--mut)}
+button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:9px 14px;background:var(--btn);color:var(--btnink);cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+button.alt{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+button.go{background:var(--acc);color:#fff}
+button:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+#ov{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:5}
+#ov[hidden]{display:none}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;width:min(640px,94vw);max-height:90vh;overflow:auto}
+.box h1{margin:0 0 6px;font-size:36px;line-height:1}
+.box h2{margin:0 0 12px}
+.box p{margin:6px 0;color:var(--mut);max-width:60ch}
+.sc{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;color:var(--mut);font-weight:600}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.pos{color:#2d8a5b}.neg{color:#c23b3b}
+</style>
+</head>
+<body>
+<header>
+  <span>💰 <b id="money">$0</b></span>
+  <span>Tag <b id="day">1</b></span>
+  <span>🕒 <b id="clock">08:00</b></span>
+  <span>⭐ <b id="rating">3.5</b></span>
+</header>
+<main><canvas id="cv" width="800" height="480" aria-label="Supermarkt"></canvas></main>
+<footer>
+  <div id="msg"></div>
+  <button id="bOpen" class="go">Laden öffnen</button>
+  <button id="bAct">Auffüllen (E)</button>
+  <button id="bMgr" class="alt">Verwaltung (M)</button>
+</footer>
+<div id="ov" hidden></div>
+
+<script>
+const W=800,H=480,TD=150,$=id=>document.getElementById(id);
+const cv=$('cv'),g=cv.getContext('2d'),ov=$('ov');
+const P=[
+ {n:'Brot',e:'🍞',c:1.2,b:2.5},{n:'Milch',e:'🥛',c:.9,b:1.9},{n:'Obst',e:'🍎',c:1.5,b:3.2},
+ {n:'Snacks',e:'🍫',c:1.4,b:3},{n:'Getränke',e:'🥤',c:1.1,b:2.6},{n:'Konserven',e:'🥫',c:.8,b:1.9}];
+const SH=P.map((p,i)=>({x:150+(i%3)*190,y:110+Math.floor(i/3)*130,w:120,h:34}));
+const R={x:690,y:300,w:70,h:34},ST={x:24,y:24,w:90,h:56};
+const RENT=50,WAGE=40,KEY='supermarkt-tycoon-v3';
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const money=v=>'$'+v.toFixed(2);
+
+let S,D,mode='title',ui='title',t=0,cs=[],px=725,py=250,tx=null,ty=null,keys={},serveT=0,spawnT=3,msgT=0;
+
+const fresh=()=>({money:500,day:1,rating:3.5,lager:P.map(()=>6),shelf:P.map(()=>0),price:P.map(p=>p.b),cap:8,cashier:false});
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const load=()=>{try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}};
+
+function newDay(){
+  D={rev:0,cust:0,sold:0,lost:0,spent:0};
+  t=0;cs=[];px=725;py=250;tx=null;spawnT=3;serveT=0;mode='prep';
+  toast('Tag '+S.day+': Regale füllen, Preise prüfen, dann den Laden öffnen.',9);
+}
+function toast(m,s=4){$('msg').textContent=m;msgT=s}
+
+/* ---------- Overlay ---------- */
+function showOv(kind,html){ui=kind;ov.innerHTML='<div class="box">'+html+'</div>';ov.hidden=false}
+function closeOv(){ui=null;ov.hidden=true}
+
+function title(){
+  const has=!!load();
+  showOv('title',`<h1>Supermarkt Tycoon</h1>
+  <p>Fülle die Regale aus dem Lager, kassiere und halte deine Kunden zufrieden. Jeder Tag dauert etwa zweieinhalb Minuten.</p>
+  <p>Bewegen: WASD, Pfeiltasten oder Tippen auf das Spielfeld. Regal auffüllen: E. Verwaltung: M.</p>
+  <p>Kasse: Steh hinter der Kasse, um Kunden zu bedienen, oder stelle einen Kassierer ein.</p>
+  <div class="btns"><button data-a="new" class="go">Neues Spiel</button>${has?'<button data-a="cont" class="alt">Weiterspielen</button>':''}</div>`);
+}
+
+function panel(){
+  if(mode!=='prep'&&mode!=='run')return;
+  showOv('panel',`<h2>Verwaltung</h2>
+  <div class="sc"><table><tr><th>Ware<th>Regal<th>Lager<th>Preis<th>Nachbestellen</tr>
+  ${P.map((p,i)=>`<tr><td>${p.e} ${p.n} <small>(EK ${money(p.c)})</small><td>${S.shelf[i]}/${S.cap}<td>${S.lager[i]}
+  <td><button class="alt" data-a="pm" data-i="${i}">−</button> ${money(S.price[i])} <button class="alt" data-a="pp" data-i="${i}">+</button>
+  <td><button data-a="ord" data-i="${i}" ${S.money<p.c*10?'disabled':''}>+10 für ${money(p.c*10)}</button></tr>`).join('')}</table></div>
+  <p>Zu hohe Preise vergraulen Kunden, zu niedrige drücken den Gewinn. Tägliche Fixkosten: Miete ${money(RENT)}${S.cashier?', Kassierer '+money(WAGE):''}.</p>
+  <div class="btns">
+    <button data-a="hire" ${S.cashier||S.money<500?'disabled':''}>${S.cashier?'Kassierer eingestellt':'Kassierer einstellen · $500 (+$40/Tag)'}</button>
+    <button data-a="cap" ${S.money<300?'disabled':''}>Regale vergrößern · $300 (+4 Plätze)</button>
+    <button class="alt" data-a="close">Schließen</button>
+  </div>`);
+}
+
+function summary(){
+  const wage=S.cashier?WAGE:0,profit=D.rev-D.spent-RENT-wage;
+  S.money-=RENT+wage;
+  const over=S.money<0;
+  const row=(a,b,c='')=>`<div class="row"><span>${a}</span><b class="${c}">${b}</b></div>`;
+  showOv('sum',`<h2>Tag ${S.day} beendet</h2>
+  ${row('Kunden bedient',D.cust)}${row('Verkaufte Artikel',D.sold)}${row('Verlorene Kunden',D.lost,D.lost?'neg':'')}
+  ${row('Umsatz',money(D.rev))}${row('Wareneinkauf',money(-D.spent))}${row('Miete & Personal',money(-(RENT+wage)))}
+  ${row('Gewinn',money(profit),profit>=0?'pos':'neg')}${row('Bewertung','⭐ '+S.rating.toFixed(1))}${row('Kontostand',money(S.money))}
+  ${over?'<p class="neg">Dein Konto ist im Minus. Der Laden ist pleite.</p>':''}
+  <div class="btns">${over?'<button data-a="new" class="go">Neues Spiel</button>':'<button data-a="next" class="go">Nächster Tag</button>'}</div>`);
+  if(!over){S.day++;save()}else{try{localStorage.removeItem(KEY)}catch(e){}}
+}
+
+const act={
+  new(){S=fresh();S.shelf=P.map(()=>3);S.lager=P.map(()=>3);closeOv();newDay()},
+  cont(){S=load()||fresh();closeOv();newDay()},
+  next(){closeOv();newDay()},
+  close(){closeOv()},
+  pm(i){S.price[i]=Math.max(.5,+(S.price[i]-.1).toFixed(2));panel()},
+  pp(i){S.price[i]=Math.min(P[i].b*3,+(S.price[i]+.1).toFixed(2));panel()},
+  ord(i){const c=P[i].c*10;if(S.money>=c){S.money-=c;D.spent+=c;S.lager[i]+=10}panel()},
+  hire(){if(S.money>=500&&!S.cashier){S.money-=500;S.cashier=true}panel()},
+  cap(){if(S.money>=300){S.money-=300;S.cap+=4}panel()}
+};
+ov.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(b&&!b.disabled)act[b.dataset.a](+b.dataset.i)});
+
+/* ---------- Spiellogik ---------- */
+const near=(o,d)=>Math.hypot(Math.max(o.x-px,0,px-(o.x+o.w)),Math.max(o.y-py,0,py-(o.y+o.h)))<d;
+const nearShelf=()=>SH.findIndex(s=>near(s,38));
+
+function fill(){
+  const i=nearShelf();
+  if(i<0){toast('Geh näher an ein Regal, um es aufzufüllen.');return}
+  const n=Math.min(S.lager[i],S.cap-S.shelf[i]);
+  if(S.shelf[i]>=S.cap)toast(P[i].n+': Regal ist voll.');
+  else if(!n)toast(P[i].n+': Lager leer. Bestelle nach (M).');
+  else{S.lager[i]-=n;S.shelf[i]+=n;toast(n+'× '+P[i].n+' aufgefüllt.',2)}
+}
+
+function spawn(){
+  const i=Math.random()*P.length|0;
+  cs.push({x:60,y:H+10,i,q:1+(Math.random()*3|0),w:P[i].b*(.9+Math.random()*.5),st:0,qt:0,slot:0,bad:false,c:`hsl(${Math.random()*360|0} 55% 55%)`});
+}
+function mv(c,x,y,sp,dt){
+  const dx=x-c.x,dy=y-c.y,d=Math.hypot(dx,dy);
+  if(d<3)return true;
+  const s=Math.min(d,sp*dt);c.x+=dx/d*s;c.y+=dy/d*s;return false;
+}
+const score=v=>{S.rating=clamp(S.rating*.93+v*.07,1,5)};
+
+function update(dt){
+  if(msgT>0){msgT-=dt;if(msgT<=0&&mode==='prep')toast('Bereit? Öffne den Laden, wenn die Regale gefüllt sind.',0)}
+  if(ui||(mode!=='prep'&&mode!=='run'))return;
+  let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+  if(dx||dy)tx=null;
+  else if(tx!=null){const ex=tx-px,ey=ty-py,d=Math.hypot(ex,ey);if(d<4)tx=null;else{dx=ex/d;dy=ey/d}}
+  const l=Math.hypot(dx,dy)||1;
+  px=clamp(px+dx/l*170*dt,14,W-14);py=clamp(py+dy/l*170*dt,14,H-14);
+  if(mode!=='run')return;
+
+  t+=dt;spawnT-=dt;
+  if(spawnT<=0&&t<TD-12){spawn();spawnT=(5/(.6+S.rating/4))/(1+S.day*.05)*(.6+Math.random()*.8)}
+
+  const q=cs.filter(c=>c.st===1).sort((a,b)=>a.qt-b.qt);
+  q.forEach((c,k)=>c.slot=k);
+  for(const c of cs){
+    if(c.st===0){
+      const s=SH[c.i];
+      if(mv(c,s.x+s.w/2,s.y+s.h+24,90,dt)){
+        if(S.shelf[c.i]>0&&S.price[c.i]<=c.w){c.n=Math.min(c.q,S.shelf[c.i]);S.shelf[c.i]-=c.n;c.st=1;c.qt=t}
+        else{c.st=3;c.bad=true;D.lost++;score(1)}
+      }
+    }else if(c.st===1){
+      mv(c,R.x+35-c.slot*30,R.y+R.h+34,90,dt);
+      if(t-c.qt>30&&c.slot>0){c.st=3;c.bad=true;D.lost++;score(1.5);S.shelf[c.i]+=c.n}
+    }else if(c.st===3){
+      if(mv(c,60,H+20,100,dt))c.gone=true;
+    }
+  }
+  const f=q[0];
+  if(f&&Math.hypot(f.x-(R.x+35),f.y-(R.y+R.h+34))<8&&(S.cashier||near(R,70))){
+    serveT+=dt;
+    if(serveT>=1){
+      serveT=0;const pay=f.n*S.price[f.i];
+      S.money+=pay;D.rev+=pay;D.sold+=f.n;D.cust++;
+      score(t-f.qt>18?2.5:5);f.st=3;
+    }
+  }else if(!f)serveT=0;
+  cs=cs.filter(c=>!c.gone);
+  if(t>=TD){mode='sum';summary()}
+}
+
+/* ---------- Zeichnen ---------- */
+function rr(x,y,w,h,r=6){g.beginPath();g.roundRect(x,y,w,h,r);g.fill()}
+function draw(){
+  g.clearRect(0,0,W,H);
+  g.fillStyle='#dbe5df';g.fillRect(0,0,W,H);
+  g.strokeStyle='#c9d6cf';g.lineWidth=1;
+  for(let x=0;x<W;x+=40){g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke()}
+  for(let y=0;y<H;y+=40){g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke()}
+  g.textAlign='center';g.textBaseline='middle';
+  g.fillStyle='#8a6a45';rr(ST.x,ST.y,ST.w,ST.h);
+  g.fillStyle='#fff';g.font='bold 13px sans-serif';g.fillText('Lager',ST.x+ST.w/2,ST.y+ST.h/2);
+  g.fillStyle='#e8702a';g.fillRect(20,H-6,90,6);
+  if(!S)return;
+  SH.forEach((s,i)=>{
+    g.fillStyle='#2f6b5e';rr(s.x,s.y,s.w,s.h);
+    const r=S.shelf[i]/S.cap;
+    g.fillStyle=r?'#f2c14e':'#c23b3b';g.fillRect(s.x+8,s.y+s.h-9,(s.w-16)*Math.max(r,.05),5);
+    g.font='18px sans-serif';g.fillText(P[i].e,s.x+s.w/2,s.y+15);
+    g.fillStyle='#17302b';g.font='12px sans-serif';g.fillText(`${S.shelf[i]}/${S.cap} · ${money(S.price[i])}`,s.x+s.w/2,s.y+s.h+11);
+  });
+  g.fillStyle='#17302b';rr(R.x,R.y,R.w,R.h);
+  g.fillStyle='#fff';g.font='bold 13px sans-serif';g.fillText('Kasse',R.x+R.w/2,R.y+R.h/2);
+  if(S.cashier){g.fillStyle='#5aa17f';g.beginPath();g.arc(R.x+35,R.y-16,12,0,7);g.fill()}
+  for(const c of cs){
+    g.fillStyle=c.c;g.beginPath();g.arc(c.x,c.y,11,0,7);g.fill();
+    g.font='16px sans-serif';
+    g.fillText(c.st===0?P[c.i].e:c.st===1?'🛍️':c.bad?'😠':'🙂',c.x,c.y-20);
+  }
+  g.fillStyle='#e8702a';g.beginPath();g.arc(px,py,13,0,7);g.fill();
+  g.strokeStyle='#fff';g.lineWidth=2;g.stroke();
+  if(tx!=null){g.strokeStyle='#e8702a88';g.beginPath();g.arc(tx,ty,8,0,7);g.stroke()}
+  if(mode==='run'){g.fillStyle='#17302b33';g.fillRect(0,0,W,4);g.fillStyle='#e8702a';g.fillRect(0,0,W*t/TD,4)}
+}
+function hud(){
+  if(!S)return;
+  $('money').textContent=money(S.money);$('day').textContent=S.day;
+  const h=8+t/TD*12;$('clock').textContent=String(h|0).padStart(2,'0')+':'+String((h%1)*60|0).padStart(2,'0');
+  $('rating').textContent=S.rating.toFixed(1);
+  $('bOpen').hidden=mode!=='prep'||!!ui;
+  if(msgT<=0&&mode==='run'){
+    const i=nearShelf();
+    $('msg').textContent=i>=0?`${P[i].e} ${P[i].n}: E zum Auffüllen (Lager: ${S.lager[i]})`:near(R,70)?'Du bedienst an der Kasse.':S.cashier?'Der Kassierer bedient. Halte die Regale voll.':'Steh hinter der Kasse, um Kunden zu bedienen.';
+  }
+}
+let last=performance.now();
+function loop(n){const dt=Math.min(.05,(n-last)/1000);last=n;update(dt);draw();hud();requestAnimationFrame(loop)}
+
+/* ---------- Eingaben ---------- */
+function openShop(){if(mode==='prep'&&!ui){mode='run';toast('Der Laden ist offen!',3)}}
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','arrowdown','arrowleft','arrowright',' ','tab'].includes(k))e.preventDefault();
+  keys[k]=1;
+  if(ui==='panel'&&(k==='escape'||k==='m')){closeOv();return}
+  if(ui)return;
+  if(k==='e'||k===' ')fill();
+  else if(k==='m'||k==='tab')panel();
+  else if(k==='enter')openShop();
+});
+addEventListener('keyup',e=>{delete keys[e.key.toLowerCase()]});
+cv.addEventListener('pointerdown',e=>{
+  if(ui)return;
+  const r=cv.getBoundingClientRect();
+  tx=clamp((e.clientX-r.left)*W/r.width,14,W-14);ty=clamp((e.clientY-r.top)*H/r.height,14,H-14);
+});
+$('bAct').onclick=()=>{if(!ui)fill()};
+$('bMgr').onclick=()=>{ui==='panel'?closeOv():ui||panel()};
+$('bOpen').onclick=openShop;
+addEventListener('blur',()=>{keys={}});
+
+title();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
